@@ -133,7 +133,7 @@ func (a *TappxAdapter) buildEndpointURL(params *openrtb_ext.ExtImpTappx, test in
 		}
 	}
 
-	isNewEndpoint, err := regexp.Match(`^(zz|vz)[0-9]{3,}([a-z]{2,3}|test)$`, []byte(params.Endpoint))
+	isNewEndpoint, err := regexp.Match(`^(zz|vz)[0-9]{3,}([a-z]{2,}|test)$`, []byte(params.Endpoint))
 	if err != nil {
 		return "", &errortypes.BadInput{
 			Message: "Unable to match params.Endpoint " + string(params.Endpoint) + "): " + err.Error(),
