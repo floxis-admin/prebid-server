@@ -39,6 +39,7 @@ import (
 	"github.com/prebid/prebid-server/v4/server/ssl"
 	storedRequestsConf "github.com/prebid/prebid-server/v4/stored_requests/config"
 	"github.com/prebid/prebid-server/v4/usersync"
+	"github.com/prebid/prebid-server/v4/util/egressutil"
 	"github.com/prebid/prebid-server/v4/util/jsonutil"
 	"github.com/prebid/prebid-server/v4/util/uuidutil"
 	"github.com/prebid/prebid-server/v4/version"
@@ -146,6 +147,8 @@ func New(cfg *config.Configuration, rateConvertor *currency.RateConverter) (r *R
 			DialContext: defaultTransportDialContext(&net.Dialer{
 				Timeout:   time.Duration(cfg.Client.Dialer.TimeoutSeconds) * time.Second,
 				KeepAlive: time.Duration(cfg.Client.Dialer.KeepAliveSeconds) * time.Second,
+				// Bidder params interpolate into endpoint URLs; zeroclickfraud takes a whole host.
+				Control: egressutil.PublicOnlyControl,
 			}),
 			MaxConnsPerHost:       cfg.Client.MaxConnsPerHost,
 			MaxIdleConns:          cfg.Client.MaxIdleConns,
