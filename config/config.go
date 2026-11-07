@@ -596,6 +596,9 @@ type DisabledMetrics struct {
 	// True if we want to stop collecting account stored respponses metrics
 	AccountStoredResponses bool `mapstructure:"account_stored_responses"`
 
+	// True if we want to stop collecting per-account request metrics (one series per publisher id)
+	AccountRequests bool `mapstructure:"account_requests"`
+
 	// True if we don't want to collect metrics about the connections prebid
 	// server establishes with bidder servers such as the number of connections
 	// that were created or reused.
@@ -1005,6 +1008,7 @@ func SetupViper(v *viper.Viper, filename string, bidderInfos BidderInfos) {
 	v.SetDefault("metrics.disabled_metrics.account_adapter_details", false)
 	v.SetDefault("metrics.disabled_metrics.account_debug", true)
 	v.SetDefault("metrics.disabled_metrics.account_stored_responses", true)
+	v.SetDefault("metrics.disabled_metrics.account_requests", false)
 	v.SetDefault("metrics.disabled_metrics.adapter_connections_metrics", true)
 	v.SetDefault("metrics.disabled_metrics.adapter_connections_dial_metrics", true)
 	v.SetDefault("metrics.disabled_metrics.adapter_buyeruid_scrubbed", true)

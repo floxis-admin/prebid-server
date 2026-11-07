@@ -1003,6 +1003,41 @@ func TestStoredResponses(t *testing.T) {
 	}
 }
 
+func TestRecordRequestAccountRequests(t *testing.T) {
+	testCases := []struct {
+		description             string
+		accountRequestsDisabled bool
+		expectRegistered        bool
+	}{
+		{
+			description:             "Account requests enabled, per-account meter is registered and marked",
+			accountRequestsDisabled: false,
+			expectRegistered:        true,
+		},
+		{
+			description:             "Account requests disabled, no per-account meter is registered",
+			accountRequestsDisabled: true,
+			expectRegistered:        false,
+		},
+	}
+	for _, test := range testCases {
+		registry := metrics.NewRegistry()
+		m := NewMetrics(registry, []openrtb_ext.BidderName{openrtb_ext.BidderName("AnyName")}, config.DisabledMetrics{AccountRequests: test.accountRequestsDisabled}, nil, nil)
+
+		m.RecordRequest(Labels{RType: ReqTypeORTB2Web, RequestStatus: RequestStatusOK, PubID: "acct-id"})
+
+		meter := registry.Get("account.acct-id.requests")
+		if test.expectRegistered {
+			if assert.NotNil(t, meter, test.description) {
+				assert.Equal(t, int64(1), meter.(metrics.Meter).Count(), test.description)
+			}
+		} else {
+			assert.Nil(t, meter, test.description)
+		}
+		assert.Equal(t, int64(1), m.RequestStatuses[ReqTypeORTB2Web][RequestStatusOK].Count(), test.description)
+	}
+}
+
 func TestRecordAdsCertSignTime(t *testing.T) {
 	testCases := []struct {
 		description           string

@@ -157,6 +157,7 @@ func TestDefaults(t *testing.T) {
 	cmpBools(t, "account_adapter_details", false, cfg.Metrics.Disabled.AccountAdapterDetails)
 	cmpBools(t, "account_debug", true, cfg.Metrics.Disabled.AccountDebug)
 	cmpBools(t, "account_stored_responses", true, cfg.Metrics.Disabled.AccountStoredResponses)
+	cmpBools(t, "account_requests", false, cfg.Metrics.Disabled.AccountRequests)
 	cmpBools(t, "adapter_connections_metrics", true, cfg.Metrics.Disabled.AdapterConnectionMetrics)
 	cmpBools(t, "adapter_connections_dial_metrics", true, cfg.Metrics.Disabled.AdapterConnectionDialMetrics)
 	cmpBools(t, "adapter_buyeruid_scrubbed", true, cfg.Metrics.Disabled.AdapterBuyerUIDScrubbed)
@@ -490,6 +491,7 @@ metrics:
     account_adapter_details: true
     account_debug: false
     account_stored_responses: false
+    account_requests: true
     adapter_connections_metrics: true
     adapter_connections_dial_metrics: true
     adapter_buyeruid_scrubbed: false
@@ -929,6 +931,7 @@ func TestFullConfig(t *testing.T) {
 	cmpBools(t, "account_adapter_details", true, cfg.Metrics.Disabled.AccountAdapterDetails)
 	cmpBools(t, "account_debug", false, cfg.Metrics.Disabled.AccountDebug)
 	cmpBools(t, "account_stored_responses", false, cfg.Metrics.Disabled.AccountStoredResponses)
+	cmpBools(t, "account_requests", true, cfg.Metrics.Disabled.AccountRequests)
 	cmpBools(t, "adapter_connections_metrics", true, cfg.Metrics.Disabled.AdapterConnectionMetrics)
 	cmpBools(t, "adapter_connections_dial_metrics", true, cfg.Metrics.Disabled.AdapterConnectionDialMetrics)
 	cmpBools(t, "adapter_buyeruid_scrubbed", false, cfg.Metrics.Disabled.AdapterBuyerUIDScrubbed)

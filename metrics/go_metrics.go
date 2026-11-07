@@ -636,9 +636,9 @@ func (me *Metrics) RecordRequest(labels Labels) {
 		me.RequestSizeByEndpoint[GetEndpointFromRequestType(labels.RType)].Update(int64(labels.RequestSize))
 	}
 
-	// Handle the account metrics now.
-	am := me.getAccountMetrics(labels.PubID)
-	am.requestMeter.Mark(1)
+	if !me.MetricsDisabled.AccountRequests {
+		me.getAccountMetrics(labels.PubID).requestMeter.Mark(1)
+	}
 }
 
 func (me *Metrics) RecordDebugRequest(debugEnabled bool, pubID string) {

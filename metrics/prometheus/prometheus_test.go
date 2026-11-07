@@ -416,6 +416,29 @@ func TestAccountMetric(t *testing.T) {
 	}
 }
 
+func TestAccountMetricDisabled(t *testing.T) {
+	m := createMetricsForTesting()
+	m.metricsDisabled.AccountRequests = true
+
+	for _, pubID := range []string{"00001d85d5", "00008a28d1", metrics.PublisherUnknown} {
+		m.RecordRequest(metrics.Labels{
+			RType:         metrics.ReqTypeORTB2Web,
+			RequestStatus: metrics.RequestStatusOK,
+			PubID:         pubID,
+		})
+	}
+
+	series := make(chan prometheus.Metric, 8)
+	m.accountRequests.Collect(series)
+	close(series)
+	assert.Equal(t, 0, len(series), "no per-account series")
+	assertCounterVecValue(t, "", "requests", m.requests, 3,
+		prometheus.Labels{
+			requestTypeLabel:   string(metrics.ReqTypeORTB2Web),
+			requestStatusLabel: string(metrics.RequestStatusOK),
+		})
+}
+
 func TestImpressionsMetric(t *testing.T) {
 	performTest := func(m *Metrics, isBanner, isVideo, isAudio, isNative bool) {
 		m.RecordImps(metrics.ImpLabels{

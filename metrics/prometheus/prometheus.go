@@ -738,7 +738,7 @@ func (m *Metrics) RecordRequest(labels metrics.Labels) {
 		}).Inc()
 	}
 
-	if labels.PubID != metrics.PublisherUnknown {
+	if !m.metricsDisabled.AccountRequests && labels.PubID != metrics.PublisherUnknown {
 		m.accountRequests.With(prometheus.Labels{
 			accountLabel: labels.PubID,
 		}).Inc()
