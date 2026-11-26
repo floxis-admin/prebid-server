@@ -264,7 +264,7 @@ func TestPreloadCache(t *testing.T) {
 	s := make(saver, 0, 5)
 	m := &metrics.MetricsEngineMock{}
 	m.On("RecordGvlListRequest").Times(5)
-	preloadCache(context.Background(), server.Client(), testURLMaker(server), s.saveVendorLists, m)
+	preloadCache(context.Background(), server.Client(), testURLMaker(server), s.saveVendorLists, nil, nil, m)
 
 	expectedLoadedVersions := []versionInfo{
 		{specVersion: 2, listVersion: 2},

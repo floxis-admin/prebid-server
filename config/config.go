@@ -277,6 +277,9 @@ type GDPR struct {
 	TCF2                    TCF2 `mapstructure:"tcf2"`
 	AMPException            bool `mapstructure:"amp_exception"` // Deprecated: Use account-level GDPR settings (gdpr.integration_enabled.amp) instead
 	LiveGVLRefreshInterval  int  `mapstructure:"live_gvl_refresh_interval_seconds"`
+	// VendorListCacheDir, when set, persists fetched vendor lists there and preloads from them at
+	// startup instead of the network.
+	VendorListCacheDir string `mapstructure:"vendorlist_cache_dir"`
 	// EEACountries (EEA = European Economic Area) are a list of countries where we should assume GDPR applies.
 	// If the gdpr flag is unset in a request, but geo.country is set, we will assume GDPR applies if and only
 	// if the country matches one on this list. If both the GDPR flag and country are not set, we default
@@ -1198,6 +1201,7 @@ func SetupViper(v *viper.Viper, filename string, bidderInfos BidderInfos) {
 	v.SetDefault("gdpr.host_vendor_id", 0)
 	v.SetDefault("gdpr.timeouts_ms.init_vendorlist_fetches", 0)
 	v.SetDefault("gdpr.timeouts_ms.active_vendorlist_fetch", 0)
+	v.SetDefault("gdpr.vendorlist_cache_dir", "")
 	v.SetDefault("gdpr.non_standard_publishers", []string{""})
 	v.SetDefault("gdpr.live_gvl_refresh_interval_seconds", 86400) // 1 day
 	v.SetDefault("gdpr.tcf2.enabled", true)

@@ -20,6 +20,7 @@ import (
 )
 
 type saveVendors func(uint16, uint16, api.VendorList)
+type persistVendors func(specVersion, listVersion uint16, body []byte)
 type VendorListFetcher func(ctx context.Context, specVersion uint16, listVersion uint16, metricsEngine metrics.MetricsEngine) (vendorlist.VendorList, error)
 
 // latestSpecVersion is the highest GVL specification version supported. Update this value when
@@ -33,11 +34,50 @@ const latestSpecVersion = 3
 // Nothing in this file is exported. Public APIs can be found in gdpr.go
 
 func NewVendorListFetcher(initCtx context.Context, cfg config.GDPR, client *http.Client, metricsEngine metrics.MetricsEngine, urlMaker func(uint16, uint16) string) VendorListFetcher {
-	cacheSave, cacheLoad := newVendorListCache()
+	fetcher, _ := newVendorListFetcher(initCtx, cfg, client, metricsEngine, urlMaker)
+	return fetcher
+}
 
-	preloadContext, cancel := context.WithTimeout(initCtx, cfg.Timeouts.InitTimeout())
-	defer cancel()
-	preloadCache(preloadContext, client, urlMaker, cacheSave, metricsEngine)
+// newVendorListFetcher also returns a channel closed when the background refresh of a disk-backed
+// cache finishes (nil without a cache dir).
+func newVendorListFetcher(initCtx context.Context, cfg config.GDPR, client *http.Client, metricsEngine metrics.MetricsEngine, urlMaker func(uint16, uint16) string) (VendorListFetcher, <-chan struct{}) {
+	cacheSave, cacheLoad := newVendorListCache()
+	known := func(specVersion, listVersion uint16) bool { return cacheLoad(specVersion, listVersion) != nil }
+
+	var disk *vendorListDisk
+	var persist persistVendors
+	var loadedFromDisk map[uint16]int
+	if cfg.VendorListCacheDir != "" {
+		disk = &vendorListDisk{dir: cfg.VendorListCacheDir}
+		persist = disk.save
+		loadedFromDisk = disk.preloadNewest(cacheSave, diskPreloadNewestPerSpec)
+		known = func(specVersion, listVersion uint16) bool {
+			return cacheLoad(specVersion, listVersion) != nil || disk.has(specVersion, listVersion)
+		}
+		logger.Infof("Loaded vendor lists %v (spec version: count) from %s", loadedFromDisk, cfg.VendorListCacheDir)
+	}
+
+	// Never listen without a spec version's lists: TCF enforcement would drop every bidder on its gdpr=1 traffic.
+	blockOnNetwork := false
+	for _, v := range preloadedSpecVersions {
+		blockOnNetwork = blockOnNetwork || loadedFromDisk[v.specVersion] == 0
+	}
+	if blockOnNetwork {
+		preloadContext, cancel := context.WithTimeout(initCtx, cfg.Timeouts.InitTimeout())
+		preloadCache(preloadContext, client, urlMaker, cacheSave, known, persist, metricsEngine)
+		cancel()
+	}
+
+	var refreshed chan struct{}
+	if persist != nil {
+		refreshed = make(chan struct{})
+		go func() {
+			defer close(refreshed)
+			refreshContext, cancel := context.WithTimeout(context.Background(), cfg.Timeouts.InitTimeout())
+			defer cancel()
+			preloadCache(refreshContext, client, urlMaker, cacheSave, known, persist, metricsEngine)
+		}()
+	}
 
 	saveOneRateLimited := newOccasionalSaver(cfg.Timeouts.ActiveTimeout())
 	return func(ctx context.Context, specVersion, listVersion uint16, metricsEngine metrics.MetricsEngine) (vendorlist.VendorList, error) {
@@ -46,9 +86,15 @@ func NewVendorListFetcher(initCtx context.Context, cfg config.GDPR, client *http
 			return list, nil
 		}
 
+		if disk != nil {
+			if list := disk.loadOne(specVersion, listVersion, cacheLoad, cacheSave); list != nil {
+				return list, nil
+			}
+		}
+
 		// Attempt To Download
 		// - May not add to cache immediately.
-		saveOneRateLimited(ctx, client, urlMaker(specVersion, listVersion), cacheSave, metricsEngine)
+		saveOneRateLimited(ctx, client, urlMaker(specVersion, listVersion), cacheSave, persist, metricsEngine)
 
 		// Attempt To Load From Cache Again
 		// - May have been added by the call to saveOneRateLimited.
@@ -58,35 +104,42 @@ func NewVendorListFetcher(initCtx context.Context, cfg config.GDPR, client *http
 
 		// Give Up
 		return nil, makeVendorListNotFoundError(specVersion, listVersion)
-	}
+	}, refreshed
 }
 
 func makeVendorListNotFoundError(specVersion, listVersion uint16) error {
 	return fmt.Errorf("gdpr vendor list spec version %d list version %d does not exist, or has not been loaded yet. Try again in a few minutes", specVersion, listVersion)
 }
 
-// preloadCache saves all the known versions of the vendor list for future use.
-func preloadCache(ctx context.Context, client *http.Client, urlMaker func(uint16, uint16) string, saver saveVendors, metricsEngine metrics.MetricsEngine) {
-	versions := [2]struct {
-		specVersion      uint16
-		firstListVersion uint16
-	}{
-		{
-			specVersion:      2,
-			firstListVersion: 2, // The GVL for TCF2 has no vendors defined in its first version. It's very unlikely to be used, so don't preload it.
-		},
-		{
-			specVersion:      latestSpecVersion,
-			firstListVersion: 1,
-		},
-	}
-	for _, v := range versions {
-		latestVersion := saveOne(ctx, client, urlMaker(v.specVersion, 0), saver, metricsEngine)
+// preloadCache saves all the known versions of the vendor list for future use, skipping those
+// known already (known may be nil). persist may be nil.
+func preloadCache(ctx context.Context, client *http.Client, urlMaker func(uint16, uint16) string, saver saveVendors, known func(uint16, uint16) bool, persist persistVendors, metricsEngine metrics.MetricsEngine) {
+	for _, v := range preloadedSpecVersions {
+		latestVersion := saveOne(ctx, client, urlMaker(v.specVersion, 0), saver, persist, metricsEngine)
 
-		for i := v.firstListVersion; i < latestVersion; i++ {
-			saveOne(ctx, client, urlMaker(v.specVersion, i), saver, metricsEngine)
+		// Newest first: consent strings overwhelmingly carry recent versions, so a budget that runs
+		// out leaves only the oldest missing.
+		for i := int(latestVersion) - 1; i >= int(v.firstListVersion); i-- {
+			if known != nil && known(v.specVersion, uint16(i)) {
+				continue
+			}
+			saveOne(ctx, client, urlMaker(v.specVersion, uint16(i)), saver, persist, metricsEngine)
 		}
 	}
+}
+
+var preloadedSpecVersions = [2]struct {
+	specVersion      uint16
+	firstListVersion uint16
+}{
+	{
+		specVersion:      2,
+		firstListVersion: 2, // The GVL for TCF2 has no vendors defined in its first version. It's very unlikely to be used, so don't preload it.
+	},
+	{
+		specVersion:      latestSpecVersion,
+		firstListVersion: 1,
+	},
 }
 
 // Make a URL which can be used to fetch a given version of the Global Vendor List. If the version is 0,
@@ -103,24 +156,24 @@ func VendorListURLMaker(specVersion, listVersion uint16) string {
 // The goal here is to update quickly when new versions of the VendorList are released, but not wreck
 // server performance if a bad CMP starts sending us malformed consent strings that advertize a version
 // that doesn't exist yet.
-func newOccasionalSaver(timeout time.Duration) func(ctx context.Context, client *http.Client, url string, saver saveVendors, metricsEngine metrics.MetricsEngine) {
+func newOccasionalSaver(timeout time.Duration) func(ctx context.Context, client *http.Client, url string, saver saveVendors, persist persistVendors, metricsEngine metrics.MetricsEngine) {
 	lastSaved := &atomic.Value{}
 	lastSaved.Store(time.Time{})
 
-	return func(ctx context.Context, client *http.Client, url string, saver saveVendors, metricsEngine metrics.MetricsEngine) {
+	return func(ctx context.Context, client *http.Client, url string, saver saveVendors, persist persistVendors, metricsEngine metrics.MetricsEngine) {
 		now := time.Now()
 		timeSinceLastSave := now.Sub(lastSaved.Load().(time.Time))
 
 		if timeSinceLastSave.Minutes() > 10 {
 			withTimeout, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			saveOne(withTimeout, client, url, saver, metricsEngine)
+			saveOne(withTimeout, client, url, saver, persist, metricsEngine)
 			lastSaved.Store(now)
 		}
 	}
 }
 
-func saveOne(ctx context.Context, client *http.Client, url string, saver saveVendors, me metrics.MetricsEngine) uint16 {
+func saveOne(ctx context.Context, client *http.Client, url string, saver saveVendors, persist persistVendors, me metrics.MetricsEngine) uint16 {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		logger.Errorf("Failed to build GET %s request. Cookie syncs may be affected: %v", url, err)
@@ -154,6 +207,9 @@ func saveOne(ctx context.Context, client *http.Client, url string, saver saveVen
 	}
 
 	saver(newList.SpecVersion(), newList.Version(), newList)
+	if persist != nil {
+		persist(newList.SpecVersion(), newList.Version(), respBody)
+	}
 	return newList.Version()
 }
 
