@@ -869,12 +869,14 @@ func (cf mockStoredReqFetcher) FetchResponses(ctx context.Context, ids []string)
 
 // mockExchange implements the Exchange interface
 type mockExchange struct {
-	lastRequest *openrtb2.BidRequest
+	lastRequest  *openrtb2.BidRequest
+	lastDebugLog *exchange.DebugLog
 }
 
 func (m *mockExchange) HoldAuction(ctx context.Context, auctionRequest *exchange.AuctionRequest, debugLog *exchange.DebugLog) (*exchange.AuctionResponse, error) {
 	r := auctionRequest.BidRequestWrapper
 	m.lastRequest = r.BidRequest
+	m.lastDebugLog = debugLog
 	return &exchange.AuctionResponse{
 		BidResponse: &openrtb2.BidResponse{
 			SeatBid: []openrtb2.SeatBid{{

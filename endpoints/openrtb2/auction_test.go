@@ -43,6 +43,7 @@ import (
 	"github.com/prebid/prebid-server/v4/util/jsonutil"
 	"github.com/prebid/prebid-server/v4/util/ptrutil"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const jsonFileExtension string = ".json"
@@ -502,6 +503,65 @@ func TestExplicitUserId(t *testing.T) {
 
 	if ex.lastRequest.User.ID != "explicit" {
 		t.Errorf("Bad User ID. Expected explicit, got %s", ex.lastRequest.User.ID)
+	}
+}
+
+func TestDebugOverrideHeader(t *testing.T) {
+	testCases := []struct {
+		description   string
+		configToken   string
+		headerToken   string
+		expectedDebug bool
+	}{
+		{description: "matching token", configToken: "secret", headerToken: "secret", expectedDebug: true},
+		{description: "wrong token", configToken: "secret", headerToken: "guess", expectedDebug: false},
+		{description: "no header", configToken: "secret", headerToken: "", expectedDebug: false},
+		{description: "no configured token", configToken: "", headerToken: "", expectedDebug: false},
+		{description: "header without configured token", configToken: "", headerToken: "secret", expectedDebug: false},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.description, func(t *testing.T) {
+			cfg := &config.Configuration{MaxRequestSize: maxSize}
+			cfg.Debug.OverrideToken = test.configToken
+			ex := &mockExchange{}
+			request := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader(`{
+				"id": "some-request-id",
+				"site": {"page": "test.somepage.com"},
+				"imp": [{"id": "my-imp-id", "banner": {"format": [{"w": 300, "h": 600}]}, "ext": {"appnexus": {"placementId": 12883451}}}]
+			}`))
+			if test.headerToken != "" {
+				request.Header.Set("x-pbs-debug-override", test.headerToken)
+			}
+
+			endpoint, _ := NewEndpoint(
+				fakeUUIDGenerator{},
+				ex,
+				ortb.NewRequestValidator(openrtb_ext.BuildBidderMap(), map[string]string{}, mockBidderParamValidator{}),
+				empty_fetcher.EmptyFetcher{},
+				empty_fetcher.EmptyFetcher{},
+				cfg,
+				&metricsConfig.NilMetricsEngine{},
+				analyticsBuild.New(&config.Analytics{}),
+				map[string]string{},
+				[]byte{},
+				openrtb_ext.BuildBidderMap(),
+				empty_fetcher.EmptyFetcher{},
+				hooks.EmptyPlanBuilder{},
+				nil,
+			)
+			endpoint(httptest.NewRecorder(), request, nil)
+
+			require.NotNil(t, ex.lastRequest, "the request never reached the exchange")
+			if test.expectedDebug {
+				require.NotNil(t, ex.lastDebugLog)
+				assert.True(t, ex.lastDebugLog.DebugOverride)
+				assert.True(t, ex.lastDebugLog.DebugEnabledOrOverridden)
+			} else {
+				assert.Nil(t, ex.lastDebugLog)
+			}
+			assert.Nil(t, ex.lastRequest.Ext, "the override must not write into the request")
+		})
 	}
 }
 

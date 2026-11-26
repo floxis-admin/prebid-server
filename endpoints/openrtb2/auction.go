@@ -264,7 +264,12 @@ func (deps *endpointDeps) Auction(w http.ResponseWriter, r *http.Request, _ http
 		GDPRSignal:                 gdprSignal,
 		GDPREnforced:               gdprEnforced,
 	}
-	auctionResponse, err := deps.ex.HoldAuction(ctx, auctionRequest, nil)
+	// Floxis: unlike ext.prebid.debug, the override header never reaches the bidder requests.
+	var debugLog *exchange.DebugLog
+	if exchange.IsDebugOverrideEnabled(r.Header.Get(exchange.DebugOverrideHeader), deps.cfg.Debug.OverrideToken) {
+		debugLog = &exchange.DebugLog{DebugOverride: true, DebugEnabledOrOverridden: true}
+	}
+	auctionResponse, err := deps.ex.HoldAuction(ctx, auctionRequest, debugLog)
 	defer func() {
 		if !auctionRequest.BidderResponseStartTime.IsZero() {
 			deps.metricsEngine.RecordOverheadTime(metrics.MakeAuctionResponse, time.Since(auctionRequest.BidderResponseStartTime))
