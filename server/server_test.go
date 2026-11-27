@@ -118,7 +118,7 @@ func TestNewMainServer(t *testing.T) {
 func TestNewTCPListener(t *testing.T) {
 	const mockAddress = ":8000" //:chose your socket_port
 
-	ret, err := newTCPListener(mockAddress, nil)
+	ret, err := newTCPListener(mockAddress, false, nil)
 	assert.Equal(t, nil, err, fmt.Sprintf("err_ : %v", err))
 	assert.NotEqual(t, nil, ret, "ret : isNil()")
 

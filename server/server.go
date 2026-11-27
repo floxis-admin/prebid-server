@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,12 +45,20 @@ func Listen(cfg *config.Configuration, handler http.Handler, adminHandler http.H
 	} else { // start the TCP server
 		var (
 			mainListener net.Listener
-			mainServer   = newMainServer(cfg, handler)
+			draining     atomic.Bool
 		)
-		go shutdownAfterSignals(mainServer, stopMain, done)
-		if mainListener, err = newTCPListener(mainServer.Addr, metrics); err != nil {
+		if cfg.SocketReusePort {
+			handler = closeWhileDraining(handler, &draining)
+		}
+		mainServer := newMainServer(cfg, handler)
+		if mainListener, err = newTCPListener(mainServer.Addr, cfg.SocketReusePort, metrics); err != nil {
 			logger.Errorf("Error listening for TCP connections on %s: %v for main server", mainServer.Addr, err)
 			return
+		}
+		if cfg.SocketReusePort {
+			go handOverAfterSignals(mainServer, mainListener, &draining, stopMain, done)
+		} else {
+			go shutdownAfterSignals(mainServer, stopMain, done)
 		}
 		go runServer(mainServer, "Main", mainListener)
 	}
@@ -60,7 +69,7 @@ func Listen(cfg *config.Configuration, handler http.Handler, adminHandler http.H
 		go shutdownAfterSignals(adminServer, stopAdmin, done)
 
 		var adminListener net.Listener
-		if adminListener, err = newTCPListener(adminServer.Addr, nil); err != nil {
+		if adminListener, err = newTCPListener(adminServer.Addr, cfg.SocketReusePort, nil); err != nil {
 			logger.Errorf("Error listening for TCP connections on %s: %v for admin server", adminServer.Addr, err)
 			return
 		}
@@ -74,13 +83,16 @@ func Listen(cfg *config.Configuration, handler http.Handler, adminHandler http.H
 		)
 		stopChannels = append(stopChannels, stopPrometheus)
 		go shutdownAfterSignals(prometheusServer, stopPrometheus, done)
-		if prometheusListener, err = newTCPListener(prometheusServer.Addr, nil); err != nil {
+		if prometheusListener, err = newTCPListener(prometheusServer.Addr, cfg.SocketReusePort, nil); err != nil {
 			logger.Errorf("Error listening for TCP connections on %s: %v for prometheus server", prometheusServer.Addr, err)
 			return
 		}
 
 		go runServer(prometheusServer, "Prometheus", prometheusListener)
 	}
+
+	// Every listener is bound, so connections queue for the servers from here on.
+	notifyReady()
 
 	wait(stopSignals, done, stopChannels...)
 
@@ -142,8 +154,12 @@ func runServer(server *http.Server, name string, listener net.Listener) (err err
 	return
 }
 
-func newTCPListener(address string, metrics metrics.MetricsEngine) (net.Listener, error) {
-	ln, err := net.Listen("tcp", address)
+func newTCPListener(address string, reusePort bool, metrics metrics.MetricsEngine) (net.Listener, error) {
+	var lc net.ListenConfig
+	if reusePort {
+		lc.Control = setReusePort
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("Error listening for TCP connections on %s: %v", address, err)
 	}
@@ -207,6 +223,61 @@ func shutdownAfterSignals(server *http.Server, stopper <-chan os.Signal, done ch
 	done <- s
 }
 
+// handOverGrace is how long a process sharing its port keeps serving the connections it already
+// accepted after it stops accepting: http.Server.Shutdown drops a request it reads once it began.
+const handOverGrace = time.Second
+
+// handOverAfterSignals stops accepting first, so the process sharing the port takes every new
+// connection (and, with net.ipv4.tcp_migrate_req=1, this listener's queue), then drains.
+func handOverAfterSignals(server *http.Server, ln net.Listener, draining *atomic.Bool, stopper <-chan os.Signal, done chan<- struct{}) {
+	sig := <-stopper
+	logger.Infof("Handing over %s because of signal: %s", server.Addr, sig.String())
+	draining.Store(true)
+	if err := ln.Close(); err != nil {
+		logger.Errorf("Failed to close the listener on %s: %v", server.Addr, err)
+	}
+	time.Sleep(handOverGrace)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Errorf("Failed to shutdown %s: %v", server.Addr, err)
+	}
+	done <- struct{}{}
+}
+
+// closeWhileDraining asks the client to stop reusing a connection once this process hands over,
+// so no request lands on one Shutdown is closing.
+func closeWhileDraining(h http.Handler, draining *atomic.Bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if draining.Load() {
+			w.Header().Set("Connection", "close")
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func sendSignal(to chan<- os.Signal, sig os.Signal) {
 	to <- sig
+}
+
+// notifyReady tells systemd (Type=notify) the servers are listening, so a unit that starts a
+// replacement before stopping the old one knows when the replacement can take connections.
+func notifyReady() {
+	addr := os.Getenv("NOTIFY_SOCKET")
+	if addr == "" {
+		return
+	}
+	if addr[0] == '@' {
+		addr = "\x00" + addr[1:]
+	}
+	conn, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Name: addr, Net: "unixgram"})
+	if err != nil {
+		logger.Errorf("sd_notify: %v", err)
+		return
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("READY=1")); err != nil {
+		logger.Errorf("sd_notify: %v", err)
+	}
 }

@@ -20,16 +20,19 @@ import (
 
 // Configuration specifies the static application config.
 type Configuration struct {
-	ExternalURL      string      `mapstructure:"external_url"`
-	Host             string      `mapstructure:"host"`
-	Port             int         `mapstructure:"port"`
-	UnixSocketEnable bool        `mapstructure:"unix_socket_enable"`
-	UnixSocketName   string      `mapstructure:"unix_socket_name"`
-	Client           HTTPClient  `mapstructure:"http_client"`
-	CacheClient      HTTPClient  `mapstructure:"http_client_cache"`
-	Admin            Admin       `mapstructure:"admin"`
-	AdminPort        int         `mapstructure:"admin_port"`
-	Compression      Compression `mapstructure:"compression"`
+	ExternalURL      string `mapstructure:"external_url"`
+	Host             string `mapstructure:"host"`
+	Port             int    `mapstructure:"port"`
+	UnixSocketEnable bool   `mapstructure:"unix_socket_enable"`
+	UnixSocketName   string `mapstructure:"unix_socket_name"`
+	// SocketReusePort sets SO_REUSEPORT on every TCP listener, so a replacement process can bind
+	// the same ports and serve before this one stops accepting: a restart without refused connections.
+	SocketReusePort bool        `mapstructure:"socket_reuse_port"`
+	Client          HTTPClient  `mapstructure:"http_client"`
+	CacheClient     HTTPClient  `mapstructure:"http_client_cache"`
+	Admin           Admin       `mapstructure:"admin"`
+	AdminPort       int         `mapstructure:"admin_port"`
+	Compression     Compression `mapstructure:"compression"`
 	// GarbageCollectorThreshold allocates virtual memory (in bytes) which is not used by PBS but
 	// serves as a hack to trigger the garbage collector only when the heap reaches at least this size.
 	// More info: https://github.com/golang/go/issues/48409
@@ -953,6 +956,7 @@ func SetupViper(v *viper.Viper, filename string, bidderInfos BidderInfos) {
 	v.SetDefault("port", 8000)
 	v.SetDefault("unix_socket_enable", false)              // boolean which decide if the socket-server will be started.
 	v.SetDefault("unix_socket_name", "prebid-server.sock") // path of the socket's file which must be listened.
+	v.SetDefault("socket_reuse_port", false)
 	v.SetDefault("admin_port", 6060)
 	v.SetDefault("admin.enabled", true) // boolean to determine if admin listener will be started.
 	v.SetDefault("garbage_collector_threshold", 0)
